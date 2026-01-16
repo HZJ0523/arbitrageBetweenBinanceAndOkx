@@ -1,0 +1,265 @@
+import type { FastifyInstance } from 'fastify';
+import type { WebSocket } from 'ws';
+import { MonitorService } from './services/monitor.js';
+import logger from './utils/logger.js';
+import type {
+  WSClientMessage,
+  WSServerMessage,
+  MonitorConfig,
+  LogMessage,
+} from './types/index.js';
+
+/**
+ * WebSocket 连接管理器
+ */
+class WebSocketManager {
+  private clients: Set<WebSocket> = new Set();
+  private monitorService: MonitorService;
+  private logUnsubscribe: (() => void) | null = null;
+
+  constructor() {
+    this.monitorService = new MonitorService();
+    this.setupMonitorCallbacks();
+    this.setupLogSubscription();
+  }
+
+  /**
+   * 设置监控服务回调
+   */
+  private setupMonitorCallbacks(): void {
+    // 数据更新回调
+    this.monitorService.onDataUpdate((data) => {
+      this.broadcast({
+        type: 'FUNDING_RATE_ARBITRAGE_DATA',
+        payload: {
+          data: data.fundingRateArbitrage,
+          updatedAt: data.updatedAt.toISOString(),
+        },
+      });
+    });
+
+    // 状态更新回调
+    this.monitorService.onStatusUpdate((status) => {
+      this.broadcast({
+        type: 'STATUS_UPDATE',
+        payload: {
+          isMonitoring: status.isMonitoring,
+          isRefreshing: status.isRefreshing,
+          nextUpdateAt: status.nextUpdateAt?.toISOString() || null,
+          lastError: status.lastError,
+        },
+      });
+    });
+  }
+
+  /**
+   * 设置日志订阅
+   */
+  private setupLogSubscription(): void {
+    this.logUnsubscribe = logger.subscribe((log: LogMessage) => {
+      this.broadcast({
+        type: 'LOG',
+        payload: log,
+      });
+    });
+  }
+
+  /**
+   * 添加客户端连接
+   */
+  addClient(ws: WebSocket): void {
+    this.clients.add(ws);
+    logger.info('WebSocket client connected', {
+      totalClients: this.clients.size,
+    });
+
+    // 发送当前状态
+    const status = this.monitorService.getStatus();
+    this.send(ws, {
+      type: 'STATUS_UPDATE',
+      payload: {
+        isMonitoring: status.isMonitoring,
+        isRefreshing: status.isRefreshing,
+        nextUpdateAt: status.nextUpdateAt?.toISOString() || null,
+        lastError: status.lastError,
+      },
+    });
+
+    // 发送缓存的最新数据
+    const latestData = this.monitorService.getLatestData();
+    if (latestData.updatedAt) {
+      this.send(ws, {
+        type: 'FUNDING_RATE_ARBITRAGE_DATA',
+        payload: {
+          data: latestData.fundingRateArbitrage,
+          updatedAt: latestData.updatedAt.toISOString(),
+        },
+      });
+    }
+  }
+
+  /**
+   * 移除客户端连接
+   */
+  removeClient(ws: WebSocket): void {
+    this.clients.delete(ws);
+    logger.info('WebSocket client disconnected', {
+      totalClients: this.clients.size,
+    });
+  }
+
+  /**
+   * 处理客户端消息
+   */
+  async handleMessage(ws: WebSocket, message: string): Promise<void> {
+    try {
+      const msg = JSON.parse(message) as WSClientMessage;
+
+      switch (msg.type) {
+        case 'CONFIG_UPDATE':
+          this.handleConfigUpdate(msg.payload as MonitorConfig);
+          break;
+
+        case 'MANUAL_REFRESH':
+          await this.handleManualRefresh();
+          break;
+
+        case 'SUBSCRIBE':
+          // 目前订阅功能保留，默认推送所有数据
+          logger.debug('Subscribe message received', { payload: msg.payload });
+          break;
+
+        default:
+          logger.warn('Unknown message type', { message: msg });
+      }
+    } catch (error) {
+      logger.error('Failed to handle WebSocket message', {
+        error: error instanceof Error ? error.message : String(error),
+        message,
+      });
+
+      this.send(ws, {
+        type: 'ERROR',
+        payload: {
+          code: 'PARSE_ERROR',
+          message: 'Failed to parse message',
+          details: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  /**
+   * 处理配置更新
+   */
+  private handleConfigUpdate(config: MonitorConfig): void {
+    logger.info('Config update received');
+    this.monitorService.updateConfig(config);
+  }
+
+  /**
+   * 处理手动刷新
+   */
+  private async handleManualRefresh(): Promise<void> {
+    try {
+      await this.monitorService.manualRefresh();
+    } catch (error) {
+      this.broadcast({
+        type: 'ERROR',
+        payload: {
+          code: 'NETWORK_ERROR',
+          message: 'Manual refresh failed',
+          details: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  /**
+   * 发送消息到单个客户端
+   */
+  private send(ws: WebSocket, message: WSServerMessage): void {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify(message));
+    }
+  }
+
+  /**
+   * 广播消息到所有客户端
+   */
+  private broadcast(message: WSServerMessage): void {
+    const messageStr = JSON.stringify(message);
+    for (const client of this.clients) {
+      if (client.readyState === client.OPEN) {
+        client.send(messageStr);
+      }
+    }
+  }
+
+  /**
+   * 停止服务
+   */
+  stop(): void {
+    if (this.logUnsubscribe) {
+      this.logUnsubscribe();
+    }
+    this.monitorService.stop();
+
+    for (const client of this.clients) {
+      client.close();
+    }
+    this.clients.clear();
+
+    logger.info('WebSocketManager stopped');
+  }
+}
+
+// 单例实例
+let wsManager: WebSocketManager | null = null;
+
+/**
+ * 注册 WebSocket 路由
+ */
+export function registerWebSocketRoutes(app: FastifyInstance): void {
+  wsManager = new WebSocketManager();
+
+  app.get('/ws', { websocket: true }, (socket, _req) => {
+    const ws = socket as unknown as WebSocket;
+
+    wsManager!.addClient(ws);
+
+    ws.on('message', (message: Buffer) => {
+      wsManager!.handleMessage(ws, message.toString());
+    });
+
+    ws.on('close', () => {
+      wsManager!.removeClient(ws);
+    });
+
+    ws.on('error', (error) => {
+      logger.error('WebSocket error', {
+        error: error.message,
+      });
+      wsManager!.removeClient(ws);
+    });
+  });
+}
+
+/**
+ * 获取 WebSocket 管理器实例
+ */
+export function getWebSocketManager(): WebSocketManager | null {
+  return wsManager;
+}
+
+/**
+ * 停止 WebSocket 服务
+ */
+export function stopWebSocketService(): void {
+  if (wsManager) {
+    wsManager.stop();
+    wsManager = null;
+  }
+}
+
+export default registerWebSocketRoutes;
