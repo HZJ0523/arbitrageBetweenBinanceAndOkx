@@ -1,90 +1,35 @@
-// 交易所类型
-export type ExchangeType = 'binance' | 'okx';
+// 从共享类型包重导出所有通用类型
+export {
+  type ExchangeType,
+  type LogLevel,
+  type LogMessage,
+  type ExchangeAccountInfo,
+  type AccountInfo,
+  type ExchangeArbitrageData,
+  type FundingRateArbitrageItem,
+  type MonitorConfig,
+  type ConnectionStatus,
+  type WSMessageType,
+  type WSClientMessage,
+  type WSServerMessage,
+  type FundingRateArbitragePayload,
+  type StatusUpdatePayload,
+  type ErrorPayload,
+} from '@cryptos/shared';
 
-// 合约数据
+// ============================================
+// 服务端专用类型定义
+// ============================================
+
+// 合约数据 (服务端内部使用)
 export interface FuturesData {
   symbol: string;           // 标准化币种名称 (如 BTC)
   originalSymbol: string;   // 原始交易对名称
-  exchange: ExchangeType;
+  exchange: 'binance' | 'okx';
   price: number;
   fundingRate: number;      // 原始费率值 (如 0.0001 = 0.01%)
   settlementPeriodHours: number;
   nextSettlementTime: Date;
-}
-
-// 资金费率套利项
-export interface FundingRateArbitrageItem {
-  symbol: string;
-  binance: {
-    price: number;
-    fundingRate: number;
-    fundingRatePercent: string;
-    settlementPeriodHours: number;
-    nextSettlementTime: string;
-    countdownSeconds: number;
-  };
-  okx: {
-    price: number;
-    fundingRate: number;
-    fundingRatePercent: string;
-    settlementPeriodHours: number;
-    nextSettlementTime: string;
-    countdownSeconds: number;
-  };
-  annualizedYield: number;
-  annualizedYieldPercent: string;
-  priceDiff: number;
-}
-
-// 监控配置
-export interface MonitorConfig {
-  binanceApiKey?: string;
-  binanceApiSecret?: string;
-  okxApiKey?: string;
-  okxApiSecret?: string;
-  okxPassphrase?: string;
-  proxyUrl?: string;
-  autoMonitor: {
-    enabled: boolean;
-    mode: 'interval' | 'fixed';
-    intervalSeconds?: number;
-    fixedMinute?: number;
-  };
-}
-
-// WebSocket 消息类型
-export type WSMessageType =
-  | 'CONFIG_UPDATE'
-  | 'MANUAL_REFRESH'
-  | 'SUBSCRIBE'
-  | 'FUNDING_RATE_ARBITRAGE_DATA'
-  | 'STATUS_UPDATE'
-  | 'ERROR'
-  | 'LOG';
-
-// 客户端发送的消息
-export interface WSClientMessage {
-  type: 'CONFIG_UPDATE' | 'MANUAL_REFRESH' | 'SUBSCRIBE';
-  payload?: MonitorConfig | {
-    fundingRateArbitrage: boolean;
-  };
-}
-
-// 服务端发送的消息
-export interface WSServerMessage {
-  type: WSMessageType;
-  payload: unknown;
-}
-
-// 日志级别
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-
-// 日志消息
-export interface LogMessage {
-  level: LogLevel;
-  message: string;
-  timestamp: string;
-  context?: Record<string, unknown>;
 }
 
 // 重试配置
@@ -95,7 +40,7 @@ export interface RetryConfig {
   backoffMultiplier: number;
 }
 
-// 交易所API响应基础结构
+// 交易所 API 响应结构 (币安)
 export interface BinanceFuturesTicker {
   symbol: string;
   price: string;
@@ -118,6 +63,7 @@ export interface BinanceFundingInfo {
   disclaimer: boolean;
 }
 
+// 交易所 API 响应结构 (OKX)
 export interface OKXTickerData {
   instId: string;
   last: string;

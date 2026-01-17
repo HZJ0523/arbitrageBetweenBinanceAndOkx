@@ -1,4 +1,4 @@
-import type { FuturesData, ExchangeType } from '../types/index.js';
+import type { FuturesData, ExchangeType, ExchangeAccountInfo } from '../types/index.js';
 
 /**
  * 交易所 API 配置
@@ -25,6 +25,16 @@ export interface IExchange {
    * 获取所有 USDT 永续合约数据
    */
   getAllFuturesData(): Promise<FuturesData[]>;
+
+  /**
+   * 获取账户信息 (余额和延迟)
+   */
+  getAccountInfo(): Promise<ExchangeAccountInfo>;
+
+  /**
+   * 检查是否配置了 API
+   */
+  isConfigured(): boolean;
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   Settings,
   FundingRateTable,
   LogPanel,
+  AccountInfoPanel,
 } from './components';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useSettingsStore } from './stores/settings';
@@ -84,6 +85,7 @@ const App: React.FC = () => {
               {/* 侧边栏 */}
               <div className="lg:col-span-1">
                 <LogPanel />
+                <AccountInfoPanel />
               </div>
             </div>
           </div>

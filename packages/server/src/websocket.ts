@@ -7,7 +7,26 @@ import type {
   WSServerMessage,
   MonitorConfig,
   LogMessage,
+  AccountInfo,
+  StatusUpdatePayload,
 } from './types/index.js';
+
+/**
+ * 序列化状态对象为 WebSocket 消息 payload
+ */
+function serializeStatus(status: {
+  isMonitoring: boolean;
+  isRefreshing: boolean;
+  nextUpdateAt: Date | null;
+  lastError: string | null;
+}): StatusUpdatePayload {
+  return {
+    isMonitoring: status.isMonitoring,
+    isRefreshing: status.isRefreshing,
+    nextUpdateAt: status.nextUpdateAt?.toISOString() || null,
+    lastError: status.lastError,
+  };
+}
 
 /**
  * WebSocket 连接管理器
@@ -42,21 +61,28 @@ class WebSocketManager {
     this.monitorService.onStatusUpdate((status) => {
       this.broadcast({
         type: 'STATUS_UPDATE',
-        payload: {
-          isMonitoring: status.isMonitoring,
-          isRefreshing: status.isRefreshing,
-          nextUpdateAt: status.nextUpdateAt?.toISOString() || null,
-          lastError: status.lastError,
-        },
+        payload: serializeStatus(status),
+      });
+    });
+
+    // 账户信息更新回调
+    this.monitorService.onAccountInfoUpdate((accountInfo: AccountInfo) => {
+      this.broadcast({
+        type: 'ACCOUNT_INFO',
+        payload: accountInfo,
       });
     });
   }
 
   /**
-   * 设置日志订阅
+   * 设置日志订阅 (只推送 info 级别以上的日志，减少 WebSocket 消息量)
    */
   private setupLogSubscription(): void {
     this.logUnsubscribe = logger.subscribe((log: LogMessage) => {
+      // 过滤 debug 级别日志，减少前端消息量
+      if (log.level === 'debug') {
+        return;
+      }
       this.broadcast({
         type: 'LOG',
         payload: log,
@@ -77,12 +103,7 @@ class WebSocketManager {
     const status = this.monitorService.getStatus();
     this.send(ws, {
       type: 'STATUS_UPDATE',
-      payload: {
-        isMonitoring: status.isMonitoring,
-        isRefreshing: status.isRefreshing,
-        nextUpdateAt: status.nextUpdateAt?.toISOString() || null,
-        lastError: status.lastError,
-      },
+      payload: serializeStatus(status),
     });
 
     // 发送缓存的最新数据
@@ -94,6 +115,15 @@ class WebSocketManager {
           data: latestData.fundingRateArbitrage,
           updatedAt: latestData.updatedAt.toISOString(),
         },
+      });
+    }
+
+    // 发送缓存的账户信息
+    const latestAccountInfo = this.monitorService.getLatestAccountInfo();
+    if (latestAccountInfo) {
+      this.send(ws, {
+        type: 'ACCOUNT_INFO',
+        payload: latestAccountInfo,
       });
     }
   }

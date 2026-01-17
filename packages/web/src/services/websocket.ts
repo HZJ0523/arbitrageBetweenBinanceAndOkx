@@ -3,6 +3,7 @@ import type {
   MonitorConfig,
   FundingRateArbitrageItem,
   LogMessage,
+  AccountInfo,
 } from '../types';
 import { useArbitrageStore } from '../stores/arbitrage';
 import { useConnectionStore } from '../stores/connection';
@@ -67,6 +68,13 @@ function handleMessage(event: MessageEvent): void {
       case 'LOG': {
         const payload = message.payload as LogMessage;
         useConnectionStore.getState().addLog(payload);
+        break;
+      }
+
+      case 'ACCOUNT_INFO': {
+        const payload = message.payload as AccountInfo;
+        // 使用合并后的 arbitrage store
+        useArbitrageStore.getState().setAccountInfo(payload);
         break;
       }
     }

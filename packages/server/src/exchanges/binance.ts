@@ -1,11 +1,12 @@
+import { createHmac } from 'crypto';
 import { BaseExchange } from './base.js';
-import type { ExchangeApiConfig } from './types.js';
 import type {
   FuturesData,
   ExchangeType,
   BinanceFuturesTicker,
   BinancePremiumIndex,
   BinanceFundingInfo,
+  ExchangeAccountInfo,
 } from '../types/index.js';
 import { normalizeSymbol, isUsdtPerpetual } from '../utils/symbol-normalizer.js';
 import logger from '../utils/logger.js';
@@ -16,15 +17,33 @@ const BINANCE_FUTURES_BASE_URL = 'https://fapi.binance.com';
 // 默认结算周期（小时）
 const DEFAULT_SETTLEMENT_PERIOD_HOURS = 8;
 
+// 币安账户余额响应类型
+interface BinanceAccountAsset {
+  asset: string;
+  walletBalance: string;
+  unrealizedProfit: string;
+  marginBalance: string;
+  maintMargin: string;
+  initialMargin: string;
+  positionInitialMargin: string;
+  openOrderInitialMargin: string;
+  crossWalletBalance: string;
+  crossUnPnl: string;
+  availableBalance: string;
+  maxWithdrawAmount: string;
+  marginAvailable: boolean;
+  updateTime: number;
+}
+
+interface BinanceAccountInfo {
+  assets: BinanceAccountAsset[];
+}
+
 /**
  * 币安交易所 API
  */
 export class BinanceExchange extends BaseExchange {
   readonly name: ExchangeType = 'binance';
-
-  constructor(config?: ExchangeApiConfig) {
-    super(config);
-  }
 
   /**
    * 获取所有 USDT 永续合约数据
@@ -123,6 +142,114 @@ export class BinanceExchange extends BaseExchange {
     return this.request<BinanceFundingInfo[]>(
       `${BINANCE_FUTURES_BASE_URL}/fapi/v1/fundingInfo`
     );
+  }
+
+  /**
+   * 获取账户信息 (余额和延迟)
+   */
+  async getAccountInfo(): Promise<ExchangeAccountInfo> {
+    // 检查是否配置了 API
+    if (!this.isConfigured()) {
+      return {
+        exchange: 'binance',
+        configured: false,
+        latencyMs: null,
+        availableBalance: null,
+        error: null,
+      };
+    }
+
+    const startTime = Date.now();
+
+    try {
+      // 使用签名请求获取账户信息
+      const accountInfo = await this.getSignedAccountInfo();
+      const latencyMs = Date.now() - startTime;
+
+      // 查找 USDT 资产
+      const usdtAsset = accountInfo.assets.find(
+        (asset) => asset.asset === 'USDT'
+      );
+
+      const availableBalance = usdtAsset
+        ? parseFloat(usdtAsset.availableBalance)
+        : 0;
+
+      logger.debug('Binance account info fetched', {
+        latencyMs,
+        availableBalance,
+      });
+
+      return {
+        exchange: 'binance',
+        configured: true,
+        latencyMs,
+        availableBalance,
+        error: null,
+      };
+    } catch (error: unknown) {
+      const latencyMs = Date.now() - startTime;
+
+      // 尝试从 axios 错误中提取更详细的信息
+      let errorMessage = error instanceof Error ? error.message : String(error);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const axiosError = error as any;
+      if (axiosError.response?.data) {
+        const responseData = axiosError.response.data;
+        if (responseData.msg) {
+          errorMessage = `${responseData.code || ''}: ${responseData.msg}`;
+        }
+      }
+
+      logger.error('Failed to fetch Binance account info', {
+        error: errorMessage,
+        latencyMs,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        responseData: (error as any).response?.data,
+      });
+
+      return {
+        exchange: 'binance',
+        configured: true,
+        latencyMs,
+        availableBalance: null,
+        error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * 获取签名的账户信息
+   */
+  private async getSignedAccountInfo(): Promise<BinanceAccountInfo> {
+    const timestamp = Date.now();
+    const recvWindow = 5000; // 币安推荐的时间窗口
+    const queryString = `recvWindow=${recvWindow}&timestamp=${timestamp}`;
+    const signature = this.createSignature(queryString);
+
+    // 直接将签名附加到 URL，确保参数顺序与签名一致
+    const url = `${BINANCE_FUTURES_BASE_URL}/fapi/v2/account?${queryString}&signature=${signature}`;
+
+    logger.debug('Binance signed request', {
+      url: url.replace(signature, '***'),
+      timestamp,
+    });
+
+    return this.request<BinanceAccountInfo>(url, {
+      headers: {
+        'X-MBX-APIKEY': this.config.apiKey!,
+      },
+    });
+  }
+
+  /**
+   * 创建 HMAC-SHA256 签名
+   */
+  private createSignature(queryString: string): string {
+    return createHmac('sha256', this.config.apiSecret!)
+      .update(queryString)
+      .digest('hex');
   }
 }
 

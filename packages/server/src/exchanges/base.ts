@@ -2,7 +2,7 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import type { ExchangeApiConfig, HttpRequestOptions, IExchange } from './types.js';
-import type { FuturesData, ExchangeType, RetryConfig } from '../types/index.js';
+import type { FuturesData, ExchangeType, RetryConfig, ExchangeAccountInfo } from '../types/index.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -41,6 +41,18 @@ export abstract class BaseExchange implements IExchange {
    * 获取所有 USDT 永续合约数据
    */
   abstract getAllFuturesData(): Promise<FuturesData[]>;
+
+  /**
+   * 获取账户信息 (余额和延迟)
+   */
+  abstract getAccountInfo(): Promise<ExchangeAccountInfo>;
+
+  /**
+   * 检查是否配置了 API
+   */
+  isConfigured(): boolean {
+    return !!(this.config.apiKey && this.config.apiSecret);
+  }
 
   /**
    * 创建 HTTP 客户端

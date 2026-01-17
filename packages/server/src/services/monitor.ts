@@ -6,6 +6,7 @@ import logger from '../utils/logger.js';
 import type {
   FundingRateArbitrageItem,
   MonitorConfig,
+  AccountInfo,
 } from '../types/index.js';
 
 // 数据更新回调类型
@@ -21,6 +22,9 @@ type StatusUpdateCallback = (status: {
   nextUpdateAt: Date | null;
   lastError: string | null;
 }) => void;
+
+// 账户信息更新回调类型
+type AccountInfoUpdateCallback = (accountInfo: AccountInfo) => void;
 
 /**
  * 监控服务
@@ -41,6 +45,7 @@ export class MonitorService {
 
   private dataUpdateCallbacks: Set<DataUpdateCallback> = new Set();
   private statusUpdateCallbacks: Set<StatusUpdateCallback> = new Set();
+  private accountInfoUpdateCallbacks: Set<AccountInfoUpdateCallback> = new Set();
 
   // 缓存最新数据
   private latestData: {
@@ -50,6 +55,9 @@ export class MonitorService {
     fundingRateArbitrage: [],
     updatedAt: null,
   };
+
+  // 缓存账户信息
+  private latestAccountInfo: AccountInfo | null = null;
 
   constructor() {
     this.binanceExchange = new BinanceExchange();
@@ -111,10 +119,12 @@ export class MonitorService {
     const startTime = Date.now();
 
     try {
-      // 并行获取所有合约数据
-      const [binanceFutures, okxFutures] = await Promise.all([
+      // 并行获取所有合约数据和账户信息
+      const [binanceFutures, okxFutures, binanceAccountInfo, okxAccountInfo] = await Promise.all([
         this.binanceExchange.getAllFuturesData(),
         this.okxExchange.getAllFuturesData(),
+        this.binanceExchange.getAccountInfo(),
+        this.okxExchange.getAccountInfo(),
       ]);
 
       // 计算套利机会
@@ -128,11 +138,21 @@ export class MonitorService {
         updatedAt,
       };
 
+      // 更新账户信息缓存
+      this.latestAccountInfo = {
+        binance: binanceAccountInfo,
+        okx: okxAccountInfo,
+        updatedAt: updatedAt.toISOString(),
+      };
+
       // 通知数据更新
       this.notifyDataUpdate({
         fundingRateArbitrage,
         updatedAt,
       });
+
+      // 通知账户信息更新
+      this.notifyAccountInfoUpdate(this.latestAccountInfo);
 
       const duration = Date.now() - startTime;
       logger.info('Data refresh completed', {
@@ -153,6 +173,13 @@ export class MonitorService {
    */
   getLatestData(): typeof this.latestData {
     return { ...this.latestData };
+  }
+
+  /**
+   * 获取最新账户信息
+   */
+  getLatestAccountInfo(): AccountInfo | null {
+    return this.latestAccountInfo;
   }
 
   /**
@@ -193,6 +220,16 @@ export class MonitorService {
   }
 
   /**
+   * 订阅账户信息更新
+   */
+  onAccountInfoUpdate(callback: AccountInfoUpdateCallback): () => void {
+    this.accountInfoUpdateCallbacks.add(callback);
+    return () => {
+      this.accountInfoUpdateCallbacks.delete(callback);
+    };
+  }
+
+  /**
    * 通知数据更新
    */
   private notifyDataUpdate(data: Parameters<DataUpdateCallback>[0]): void {
@@ -217,6 +254,21 @@ export class MonitorService {
         callback(status);
       } catch (error) {
         logger.error('Error in status update callback', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * 通知账户信息更新
+   */
+  private notifyAccountInfoUpdate(accountInfo: AccountInfo): void {
+    for (const callback of this.accountInfoUpdateCallbacks) {
+      try {
+        callback(accountInfo);
+      } catch (error) {
+        logger.error('Error in account info update callback', {
           error: error instanceof Error ? error.message : String(error),
         });
       }
