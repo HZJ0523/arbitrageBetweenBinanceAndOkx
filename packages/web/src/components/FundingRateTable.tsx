@@ -1,66 +1,21 @@
-import React, { memo, useState, useMemo } from 'react';
-import { Table, Tag, Tooltip, Card, Empty } from 'antd';
+import React, { useState, useMemo, Suspense, lazy } from 'react';
+import { Table, Tag, Card, Empty, Tabs, Badge } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
+import { ThunderboltOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { useArbitrageStore } from '../stores/arbitrage';
-import { useTick } from '../hooks/useTick';
-import { formatPrice, formatCountdown, formatDateTime } from '../utils/format';
+import { formatPrice, formatDateTime } from '../utils/format';
+import { CountdownCell } from './Countdown';
+import { FundingRateDisplay } from './FundingRateDisplay';
 import type { FundingRateArbitrageItem } from '../types';
 
-// 计算倒计时秒数
-function calculateCountdownSeconds(nextSettlementTime: string, now: number): number {
-  const targetTime = new Date(nextSettlementTime).getTime();
-  const remaining = Math.floor((targetTime - now) / 1000);
-  return remaining > 0 ? remaining : 0;
-}
+const ActivePositionsTable = lazy(() => import('./ActivePositionsTable'));
 
-// 倒计时组件 - 使用全局 tick 驱动，不再有独立定时器
-interface CountdownProps {
-  nextSettlementTime: string;
-  tick: number;
-}
-
-const Countdown = memo<CountdownProps>(({ nextSettlementTime, tick }) => {
-  const seconds = calculateCountdownSeconds(nextSettlementTime, tick);
-
-  return (
-    <Tooltip title={formatDateTime(nextSettlementTime)}>
-      <span className="font-mono">{formatCountdown(seconds)}</span>
-    </Tooltip>
-  );
-});
-
-Countdown.displayName = 'Countdown';
-
-// 资金费率显示组件
-interface FundingRateDisplayProps {
-  rate: number;
-  percent: string;
-}
-
-const FundingRateDisplay = memo<FundingRateDisplayProps>(({ rate, percent }) => {
-  const isPositive = rate > 0;
-  const color = isPositive ? 'red' : 'green';
-  const icon = isPositive ? <ArrowUpOutlined /> : <ArrowDownOutlined />;
-
-  return (
-    <Tag color={color} icon={icon}>
-      {percent}
-    </Tag>
-  );
-});
-
-FundingRateDisplay.displayName = 'FundingRateDisplay';
-
-// 主表格组件
-export const FundingRateTable: React.FC = () => {
-  const { fundingRateArbitrage, fundingRateUpdatedAt } = useArbitrageStore();
+// 套利机会表格组件
+const ArbitrageOpportunitiesTable: React.FC = () => {
+  const { fundingRateArbitrage } = useArbitrageStore();
   const [pageSize, setPageSize] = useState(20);
 
-  // 使用全局 tick - 所有倒计时共享一个定时器
-  const tick = useTick();
-
-  // 使用 useMemo 优化列定义，避免每次渲染重新创建
+  // 使用 useMemo 优化列定义，不再依赖 tick，倒计时组件内部管理自己的 tick
   const columns: ColumnsType<FundingRateArbitrageItem> = useMemo(
     () => [
       {
@@ -121,10 +76,7 @@ export const FundingRateTable: React.FC = () => {
         key: 'binanceCountdown',
         width: 100,
         render: (_, record) => (
-          <Countdown
-            nextSettlementTime={record.binance.nextSettlementTime}
-            tick={tick}
-          />
+          <CountdownCell nextSettlementTime={record.binance.nextSettlementTime} />
         ),
       },
       {
@@ -157,45 +109,82 @@ export const FundingRateTable: React.FC = () => {
         key: 'okxCountdown',
         width: 100,
         render: (_, record) => (
-          <Countdown
-            nextSettlementTime={record.okx.nextSettlementTime}
-            tick={tick}
-          />
+          <CountdownCell nextSettlementTime={record.okx.nextSettlementTime} />
         ),
       },
     ],
-    [tick]
+    [] // 不再依赖 tick
   );
+
+  return fundingRateArbitrage.length === 0 ? (
+    <Empty description="暂无符合条件的套利机会" />
+  ) : (
+    <Table
+      columns={columns}
+      dataSource={fundingRateArbitrage}
+      rowKey="symbol"
+      scroll={{ x: 1400, y: 520 }}
+      virtual
+      pagination={{
+        pageSize,
+        showSizeChanger: true,
+        pageSizeOptions: ['10', '20', '50', '100'],
+        showTotal: (total) => `共 ${total} 条`,
+        onShowSizeChange: (_current, size) => setPageSize(size),
+      }}
+      size="small"
+    />
+  );
+};
+
+// 主表格组件 (Tabs 容器)
+export const FundingRateTable: React.FC = () => {
+  const { fundingRateUpdatedAt, activePositions, activePositionsUpdatedAt } = useArbitrageStore();
+
+  const tabItems = [
+    {
+      key: 'opportunities',
+      label: (
+        <span>
+          <UnorderedListOutlined />
+          套利机会
+        </span>
+      ),
+      children: <ArbitrageOpportunitiesTable />,
+    },
+    {
+      key: 'positions',
+      label: (
+        <span>
+          <ThunderboltOutlined />
+          正在套利
+          {activePositions.length > 0 && (
+            <Badge
+              count={activePositions.length}
+              style={{ marginLeft: 8 }}
+              size="small"
+            />
+          )}
+        </span>
+      ),
+      children: (
+        <Suspense fallback={<div className="py-8 text-center text-gray-400">加载中...</div>}>
+          <ActivePositionsTable />
+        </Suspense>
+      ),
+    },
+  ];
 
   return (
     <Card
-      title="资金费率套利机会"
+      title="资金费率套利"
       extra={
-        fundingRateUpdatedAt && (
-          <span className="text-gray-500 text-sm">
-            更新时间: {formatDateTime(fundingRateUpdatedAt)}
-          </span>
-        )
+        <span className="text-gray-500 text-sm">
+          更新时间: {formatDateTime(fundingRateUpdatedAt || activePositionsUpdatedAt || '')}
+        </span>
       }
     >
-      {fundingRateArbitrage.length === 0 ? (
-        <Empty description="暂无符合条件的套利机会" />
-      ) : (
-        <Table
-          columns={columns}
-          dataSource={fundingRateArbitrage}
-          rowKey="symbol"
-          scroll={{ x: 1400 }}
-          pagination={{
-            pageSize,
-            showSizeChanger: true,
-            pageSizeOptions: ['10', '20', '50', '100'],
-            showTotal: (total) => `共 ${total} 条`,
-            onShowSizeChange: (_current, size) => setPageSize(size),
-          }}
-          size="small"
-        />
-      )}
+      <Tabs items={tabItems} />
     </Card>
   );
 };

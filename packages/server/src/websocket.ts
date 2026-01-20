@@ -9,6 +9,9 @@ import type {
   LogMessage,
   AccountInfo,
   StatusUpdatePayload,
+  OpenArbitrageRequest,
+  CloseArbitrageRequest,
+  ActiveArbitragePosition,
 } from './types/index.js';
 
 /**
@@ -72,6 +75,43 @@ class WebSocketManager {
         payload: accountInfo,
       });
     });
+
+    // 活跃仓位更新回调
+    this.monitorService.onActivePositionsUpdate((positions: ActiveArbitragePosition[], updatedAt: Date) => {
+      this.broadcast({
+        type: 'ACTIVE_POSITIONS_DATA',
+        payload: {
+          positions,
+          updatedAt: updatedAt.toISOString(),
+        },
+      });
+    });
+
+    // 自动平仓回调 - 批量发送通知
+    this.monitorService.onAutoClose((closedPositionIds: string[]) => {
+      if (closedPositionIds.length === 0) return;
+
+      // 预先序列化所有消息，避免重复 JSON.stringify
+      const messages = closedPositionIds.map(positionId =>
+        JSON.stringify({
+          type: 'ARBITRAGE_RESULT',
+          payload: {
+            action: 'close',
+            success: true,
+            positionId,
+          },
+        })
+      );
+
+      // 批量发送到所有客户端
+      for (const client of this.clients) {
+        if (client.readyState === client.OPEN) {
+          for (const msg of messages) {
+            client.send(msg);
+          }
+        }
+      }
+    });
   }
 
   /**
@@ -126,6 +166,17 @@ class WebSocketManager {
         payload: latestAccountInfo,
       });
     }
+
+    // 发送活跃仓位数据
+    const arbitrageTradingService = this.monitorService.getArbitrageTradingService();
+    const activePositions = arbitrageTradingService.getActivePositions();
+    this.send(ws, {
+      type: 'ACTIVE_POSITIONS_DATA',
+      payload: {
+        positions: activePositions,
+        updatedAt: new Date().toISOString(),
+      },
+    });
   }
 
   /**
@@ -157,6 +208,14 @@ class WebSocketManager {
         case 'SUBSCRIBE':
           // 目前订阅功能保留，默认推送所有数据
           logger.debug('Subscribe message received', { payload: msg.payload });
+          break;
+
+        case 'OPEN_ARBITRAGE':
+          await this.handleOpenArbitrage(ws, msg.payload as OpenArbitrageRequest);
+          break;
+
+        case 'CLOSE_ARBITRAGE':
+          await this.handleCloseArbitrage(ws, msg.payload as CloseArbitrageRequest);
           break;
 
         default:
@@ -200,6 +259,89 @@ class WebSocketManager {
           code: 'NETWORK_ERROR',
           message: 'Manual refresh failed',
           details: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  /**
+   * 处理开仓请求
+   */
+  private async handleOpenArbitrage(ws: WebSocket, request: OpenArbitrageRequest): Promise<void> {
+    try {
+      const arbitrageTradingService = this.monitorService.getArbitrageTradingService();
+      const result = await arbitrageTradingService.openArbitrage(request.symbol, request.usdtAmount);
+
+      // 发送结果给请求的客户端
+      this.send(ws, {
+        type: 'ARBITRAGE_RESULT',
+        payload: {
+          action: 'open',
+          success: result.success,
+          position: result.position,
+          error: result.error,
+        },
+      });
+
+      // 如果成功，广播更新的活跃仓位
+      if (result.success) {
+        const activePositions = arbitrageTradingService.getActivePositions();
+        this.broadcast({
+          type: 'ACTIVE_POSITIONS_DATA',
+          payload: {
+            positions: activePositions,
+            updatedAt: new Date().toISOString(),
+          },
+        });
+      }
+    } catch (error) {
+      this.send(ws, {
+        type: 'ARBITRAGE_RESULT',
+        payload: {
+          action: 'open',
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  /**
+   * 处理平仓请求
+   */
+  private async handleCloseArbitrage(ws: WebSocket, request: CloseArbitrageRequest): Promise<void> {
+    try {
+      const arbitrageTradingService = this.monitorService.getArbitrageTradingService();
+      const result = await arbitrageTradingService.closeArbitrage(request.positionId);
+
+      // 发送结果给请求的客户端
+      this.send(ws, {
+        type: 'ARBITRAGE_RESULT',
+        payload: {
+          action: 'close',
+          success: result.success,
+          positionId: request.positionId,
+          error: result.error,
+        },
+      });
+
+      // 广播更新的活跃仓位
+      const activePositions = arbitrageTradingService.getActivePositions();
+      this.broadcast({
+        type: 'ACTIVE_POSITIONS_DATA',
+        payload: {
+          positions: activePositions,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    } catch (error) {
+      this.send(ws, {
+        type: 'ARBITRAGE_RESULT',
+        payload: {
+          action: 'close',
+          success: false,
+          positionId: request.positionId,
+          error: error instanceof Error ? error.message : String(error),
         },
       });
     }
@@ -273,13 +415,6 @@ export function registerWebSocketRoutes(app: FastifyInstance): void {
       wsManager!.removeClient(ws);
     });
   });
-}
-
-/**
- * 获取 WebSocket 管理器实例
- */
-export function getWebSocketManager(): WebSocketManager | null {
-  return wsManager;
 }
 
 /**

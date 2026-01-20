@@ -31,10 +31,10 @@ export function formatDateTime(isoString: string): string {
 /**
  * 格式化相对时间
  */
-export function formatRelativeTime(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = date.getTime() - now.getTime();
+export function formatRelativeTime(isoString: string, nowMs?: number): string {
+  const targetMs = new Date(isoString).getTime();
+  const baseMs = nowMs ?? Date.now();
+  const diffMs = targetMs - baseMs;
   const diffSecs = Math.floor(diffMs / 1000);
 
   if (diffSecs < 0) {
@@ -65,4 +65,3 @@ export function formatPrice(price: number): string {
     });
   }
 }
-

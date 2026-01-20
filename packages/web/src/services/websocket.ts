@@ -1,19 +1,40 @@
 import type {
   WSServerMessage,
   MonitorConfig,
-  FundingRateArbitrageItem,
-  LogMessage,
-  AccountInfo,
+  ArbitrageResultPayload,
 } from '../types';
 import { useArbitrageStore } from '../stores/arbitrage';
 import { useConnectionStore } from '../stores/connection';
+
+// 套利结果回调类型 - 支持多个监听器
+type ArbitrageResultCallback = (result: ArbitrageResultPayload) => void;
+const arbitrageResultCallbacks = new Set<ArbitrageResultCallback>();
 
 // WebSocket 连接状态
 let ws: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
-const RECONNECT_DELAY = 3000;
+const BASE_RECONNECT_DELAY = 1000;
+const MAX_RECONNECT_DELAY = 30000;
+
+// 计算指数退避重连延迟
+function getReconnectDelay(attempt: number): number {
+  const delay = Math.min(
+    BASE_RECONNECT_DELAY * Math.pow(2, attempt),
+    MAX_RECONNECT_DELAY
+  );
+  // 添加随机抖动 (±20%)，避免多客户端同时重连
+  const jitter = delay * 0.2 * (Math.random() - 0.5);
+  return Math.floor(delay + jitter);
+}
+
+function clearReconnectTimer(): void {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
 
 // 获取 WebSocket URL
 function getWebSocketUrl(): string {
@@ -22,59 +43,69 @@ function getWebSocketUrl(): string {
   return `${protocol}//${host}/ws`;
 }
 
-// 处理消息
+// 处理消息 - 使用类型守卫
 function handleMessage(event: MessageEvent): void {
   try {
     const message = JSON.parse(event.data) as WSServerMessage;
 
     switch (message.type) {
       case 'FUNDING_RATE_ARBITRAGE_DATA': {
-        const payload = message.payload as {
-          data: FundingRateArbitrageItem[];
-          updatedAt: string;
-        };
-        useArbitrageStore.getState().setFundingRateArbitrage(payload.data, payload.updatedAt);
+        useArbitrageStore.getState().setFundingRateArbitrage(
+          message.payload.data,
+          message.payload.updatedAt
+        );
         break;
       }
 
       case 'STATUS_UPDATE': {
-        const payload = message.payload as {
-          isMonitoring: boolean;
-          isRefreshing: boolean;
-          nextUpdateAt: string | null;
-          lastError: string | null;
-        };
         useConnectionStore.getState().setStatus({
-          isMonitoring: payload.isMonitoring,
-          isRefreshing: payload.isRefreshing,
-          nextUpdateAt: payload.nextUpdateAt,
-          lastError: payload.lastError,
+          isMonitoring: message.payload.isMonitoring,
+          isRefreshing: message.payload.isRefreshing,
+          nextUpdateAt: message.payload.nextUpdateAt,
+          lastError: message.payload.lastError,
         });
         break;
       }
 
       case 'ERROR': {
-        const payload = message.payload as {
-          code: string;
-          message: string;
-          details?: unknown;
-        };
         useConnectionStore.getState().setStatus({
-          lastError: `${payload.code}: ${payload.message}`,
+          lastError: `${message.payload.code}: ${message.payload.message}`,
         });
         break;
       }
 
       case 'LOG': {
-        const payload = message.payload as LogMessage;
-        useConnectionStore.getState().addLog(payload);
+        useConnectionStore.getState().addLog(message.payload);
         break;
       }
 
       case 'ACCOUNT_INFO': {
-        const payload = message.payload as AccountInfo;
-        // 使用合并后的 arbitrage store
-        useArbitrageStore.getState().setAccountInfo(payload);
+        useArbitrageStore.getState().setAccountInfo(message.payload);
+        break;
+      }
+
+      case 'ACTIVE_POSITIONS_DATA': {
+        useArbitrageStore.getState().setActivePositions(
+          message.payload.positions,
+          message.payload.updatedAt
+        );
+        break;
+      }
+
+      case 'ARBITRAGE_RESULT': {
+        const payload = message.payload;
+        // 重置开仓状态
+        if (payload.action === 'open') {
+          useArbitrageStore.getState().setIsOpening(false);
+        }
+        // 重置平仓状态
+        if (payload.action === 'close' && payload.positionId) {
+          useArbitrageStore.getState().removeClosingPositionId(payload.positionId);
+        }
+        // 调用所有回调
+        for (const callback of arbitrageResultCallbacks) {
+          callback(payload);
+        }
         break;
       }
     }
@@ -85,53 +116,67 @@ function handleMessage(event: MessageEvent): void {
 
 // 连接 WebSocket
 export function connect(): void {
-  if (ws?.readyState === WebSocket.OPEN) {
+  clearReconnectTimer();
+
+  if (ws && ws.readyState !== WebSocket.CLOSED) {
     return;
   }
 
   const url = getWebSocketUrl();
   console.log('Connecting to WebSocket:', url);
 
-  ws = new WebSocket(url);
+  const socket = new WebSocket(url);
+  ws = socket;
 
-  ws.onopen = () => {
+  socket.onopen = () => {
+    if (ws !== socket) {
+      return;
+    }
     console.log('WebSocket connected');
     useConnectionStore.getState().setConnected(true);
     reconnectAttempts = 0;
   };
 
-  ws.onclose = () => {
+  socket.onclose = () => {
+    if (ws !== socket) {
+      return;
+    }
     console.log('WebSocket disconnected');
     useConnectionStore.getState().setConnected(false);
     ws = null;
 
-    // 尝试重连
+    // 尝试重连（使用指数退避）
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      clearReconnectTimer();
+      const delay = getReconnectDelay(reconnectAttempts);
       reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
         reconnectAttempts++;
-        console.log(`Reconnecting... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+        console.log(`Reconnecting... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}), delay: ${delay}ms`);
         connect();
-      }, RECONNECT_DELAY);
+      }, delay);
     }
   };
 
-  ws.onerror = (error) => {
+  socket.onerror = (error) => {
+    if (ws !== socket) {
+      return;
+    }
     console.error('WebSocket error:', error);
   };
 
-  ws.onmessage = handleMessage;
+  socket.onmessage = (event) => {
+    if (ws !== socket) {
+      return;
+    }
+    handleMessage(event);
+  };
 }
 
 // 断开连接
 export function disconnect(): void {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-
   if (ws) {
     ws.close();
-    ws = null;
   }
 
   useConnectionStore.getState().setConnected(false);
@@ -156,9 +201,34 @@ export function sendManualRefresh(): void {
   }
 }
 
-// 检查连接状态
-export function isConnected(): boolean {
-  return ws?.readyState === WebSocket.OPEN;
+// 发送开仓请求
+export function sendOpenArbitrage(symbol: string, usdtAmount: number): void {
+  if (ws?.readyState === WebSocket.OPEN) {
+    useArbitrageStore.getState().setIsOpening(true);
+    ws.send(JSON.stringify({
+      type: 'OPEN_ARBITRAGE',
+      payload: { symbol, usdtAmount },
+    }));
+  }
+}
+
+// 发送平仓请求
+export function sendCloseArbitrage(positionId: string): void {
+  if (ws?.readyState === WebSocket.OPEN) {
+    useArbitrageStore.getState().addClosingPositionId(positionId);
+    ws.send(JSON.stringify({
+      type: 'CLOSE_ARBITRAGE',
+      payload: { positionId },
+    }));
+  }
+}
+
+// 添加套利结果回调 (返回取消订阅函数)
+export function addArbitrageResultCallback(callback: ArbitrageResultCallback): () => void {
+  arbitrageResultCallbacks.add(callback);
+  return () => {
+    arbitrageResultCallbacks.delete(callback);
+  };
 }
 
 export default {
@@ -166,5 +236,7 @@ export default {
   disconnect,
   sendConfigUpdate,
   sendManualRefresh,
-  isConnected,
+  sendOpenArbitrage,
+  sendCloseArbitrage,
+  addArbitrageResultCallback,
 };

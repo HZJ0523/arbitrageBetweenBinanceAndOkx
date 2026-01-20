@@ -2,16 +2,22 @@ import pino from 'pino';
 import type { LogLevel, LogMessage } from '../types/index.js';
 
 // 创建 pino logger 实例
+const isProduction = process.env.NODE_ENV === 'production';
+
 const pinoLogger = pino({
   level: process.env.LOG_LEVEL || 'info',
-  transport: {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'SYS:standard',
-      ignore: 'pid,hostname',
-    },
-  },
+  ...(isProduction
+    ? {}
+    : {
+        transport: {
+          target: 'pino-pretty',
+          options: {
+            colorize: true,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname',
+          },
+        },
+      }),
 });
 
 // 日志订阅者回调类型
@@ -73,11 +79,6 @@ export const logger = {
     return () => {
       subscribers.delete(callback);
     };
-  },
-
-  // 获取订阅者数量
-  getSubscriberCount(): number {
-    return subscribers.size;
   },
 };
 

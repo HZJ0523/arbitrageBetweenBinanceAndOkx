@@ -7,11 +7,13 @@ import {
   ClockCircleOutlined,
 } from '@ant-design/icons';
 import { useConnectionStore } from '../stores/connection';
+import { useTick } from '../hooks/useTick';
 import { formatRelativeTime, formatDateTime } from '../utils/format';
 
 export const StatusBar: React.FC = () => {
   const { isConnected, isMonitoring, isRefreshing, nextUpdateAt, lastError } =
     useConnectionStore();
+  const tick = useTick();
 
   return (
     <div className="flex items-center justify-between p-4 bg-white border-b">
@@ -44,7 +46,7 @@ export const StatusBar: React.FC = () => {
         {nextUpdateAt && !isRefreshing && (
           <Tooltip title={`下次更新: ${formatDateTime(nextUpdateAt)}`}>
             <Tag icon={<ClockCircleOutlined />}>
-              下次更新: {formatRelativeTime(nextUpdateAt)}
+              下次更新: {formatRelativeTime(nextUpdateAt, tick)}
             </Tag>
           </Tooltip>
         )}

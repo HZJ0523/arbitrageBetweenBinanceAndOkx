@@ -15,4 +15,11 @@ export {
   type FundingRateArbitragePayload,
   type StatusUpdatePayload,
   type ErrorPayload,
+  type ActiveArbitragePosition,
+  type OpenArbitrageRequest,
+  type OpenArbitrageResponse,
+  type CloseArbitrageRequest,
+  type CloseArbitrageResponse,
+  type ActivePositionsPayload,
+  type ArbitrageResultPayload,
 } from '@cryptos/shared';

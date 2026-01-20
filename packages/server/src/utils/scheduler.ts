@@ -7,6 +7,7 @@ interface SchedulerConfig {
   mode: 'interval' | 'fixed';
   intervalSeconds?: number;
   fixedMinute?: number;
+  fixedSecond?: number;
 }
 
 /**
@@ -18,6 +19,7 @@ export class Scheduler {
   private intervalTimer: NodeJS.Timeout | null = null;
   private fixedTimer: NodeJS.Timeout | null = null;
   private isRunning = false;
+  private nextExecutionTime: Date | null = null;
 
   constructor(callback: SchedulerCallback, config?: Partial<SchedulerConfig>) {
     this.callback = callback;
@@ -26,6 +28,7 @@ export class Scheduler {
       mode: 'interval',
       intervalSeconds: 60,
       fixedMinute: 0,
+      fixedSecond: 0,
       ...config,
     };
   }
@@ -51,6 +54,7 @@ export class Scheduler {
       mode: this.config.mode,
       intervalSeconds: this.config.intervalSeconds,
       fixedMinute: this.config.fixedMinute,
+      fixedSecond: this.config.fixedSecond,
     });
   }
 
@@ -63,6 +67,7 @@ export class Scheduler {
     }
 
     if (!this.config.enabled) {
+      this.nextExecutionTime = null;
       return;
     }
 
@@ -90,6 +95,7 @@ export class Scheduler {
     }
 
     this.isRunning = false;
+    this.nextExecutionTime = null;
     logger.info('Scheduler stopped');
   }
 
@@ -101,34 +107,19 @@ export class Scheduler {
       return null;
     }
 
+    const nowMs = Date.now();
+    if (this.nextExecutionTime && this.nextExecutionTime.getTime() > nowMs) {
+      return this.nextExecutionTime;
+    }
+
     if (this.config.mode === 'interval') {
       const intervalMs = (this.config.intervalSeconds || 60) * 1000;
-      return new Date(Date.now() + intervalMs);
-    } else {
-      return this.getNextFixedTime();
+      this.nextExecutionTime = new Date(nowMs + intervalMs);
+      return this.nextExecutionTime;
     }
-  }
 
-  /**
-   * 手动触发执行（不影响自动调度）
-   */
-  async trigger(): Promise<void> {
-    logger.info('Manual trigger executed');
-    try {
-      await this.callback();
-    } catch (error) {
-      logger.error('Error in manual trigger', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * 获取当前配置
-   */
-  getConfig(): SchedulerConfig {
-    return { ...this.config };
+    this.nextExecutionTime = this.getNextFixedTime();
+    return this.nextExecutionTime;
   }
 
   /**
@@ -136,6 +127,13 @@ export class Scheduler {
    */
   isSchedulerRunning(): boolean {
     return this.isRunning;
+  }
+
+  /**
+   * 获取当前配置（只读引用，请勿修改）
+   */
+  getConfig(): Readonly<SchedulerConfig> {
+    return this.config;
   }
 
   // 间隔模式
@@ -146,7 +144,9 @@ export class Scheduler {
       intervalSeconds: this.config.intervalSeconds,
     });
 
+    this.nextExecutionTime = new Date(Date.now() + intervalMs);
     this.intervalTimer = setInterval(async () => {
+      this.nextExecutionTime = new Date(Date.now() + intervalMs);
       try {
         await this.callback();
       } catch (error) {
@@ -163,12 +163,14 @@ export class Scheduler {
       const nextTime = this.getNextFixedTime();
       const delay = nextTime.getTime() - Date.now();
 
+      this.nextExecutionTime = nextTime;
       logger.info('Scheduling next fixed execution', {
         nextTime: nextTime.toISOString(),
         delayMs: delay,
       });
 
       this.fixedTimer = setTimeout(async () => {
+        this.nextExecutionTime = this.getNextFixedTime();
         try {
           await this.callback();
         } catch (error) {
@@ -191,10 +193,11 @@ export class Scheduler {
   private getNextFixedTime(): Date {
     const now = new Date();
     const targetMinute = this.config.fixedMinute || 0;
+    const targetSecond = this.config.fixedSecond || 0;
     const next = new Date(now);
 
     next.setMinutes(targetMinute);
-    next.setSeconds(0);
+    next.setSeconds(targetSecond);
     next.setMilliseconds(0);
 
     // 如果目标时间已过，设置为下一个小时

@@ -13,7 +13,7 @@ import {
 } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 import { useSettingsStore } from '../stores/settings';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { sendConfigUpdate } from '../services/websocket';
 
 interface SettingsProps {
   open: boolean;
@@ -22,7 +22,6 @@ interface SettingsProps {
 
 export const Settings: React.FC<SettingsProps> = ({ open, onClose }) => {
   const [form] = Form.useForm();
-  const { updateConfig } = useWebSocket();
 
   const {
     binanceApiKey,
@@ -35,6 +34,7 @@ export const Settings: React.FC<SettingsProps> = ({ open, onClose }) => {
     autoMonitorMode,
     intervalSeconds,
     fixedMinute,
+    fixedSecond,
     setApiConfig,
     setProxyUrl,
     setAutoMonitor,
@@ -57,9 +57,10 @@ export const Settings: React.FC<SettingsProps> = ({ open, onClose }) => {
         autoMonitorMode,
         intervalSeconds,
         fixedMinute,
+        fixedSecond,
       });
     }
-  }, [open, form, binanceApiKey, binanceApiSecret, okxApiKey, okxApiSecret, okxPassphrase, proxyUrl, autoMonitorEnabled, autoMonitorMode, intervalSeconds, fixedMinute]);
+  }, [open, form, binanceApiKey, binanceApiSecret, okxApiKey, okxApiSecret, okxPassphrase, proxyUrl, autoMonitorEnabled, autoMonitorMode, intervalSeconds, fixedMinute, fixedSecond]);
 
   const handleSave = () => {
     form.validateFields().then((values) => {
@@ -77,11 +78,12 @@ export const Settings: React.FC<SettingsProps> = ({ open, onClose }) => {
         mode: values.autoMonitorMode,
         intervalSeconds: values.intervalSeconds,
         fixedMinute: values.fixedMinute,
+        fixedSecond: values.fixedSecond,
       });
 
       // 发送配置到服务器
       const config = getMonitorConfig();
-      updateConfig(config);
+      sendConfigUpdate(config);
 
       message.success('设置已保存');
       onClose();
@@ -117,6 +119,7 @@ export const Settings: React.FC<SettingsProps> = ({ open, onClose }) => {
           autoMonitorMode: 'interval',
           intervalSeconds: 60,
           fixedMinute: 0,
+          fixedSecond: 0,
         }}
       >
         {/* 代理配置 */}
@@ -213,21 +216,38 @@ export const Settings: React.FC<SettingsProps> = ({ open, onClose }) => {
                         <InputNumber min={10} max={3600} style={{ width: '100%' }} />
                       </Form.Item>
                     ) : (
-                      <Form.Item
-                        label="每小时第几分钟执行"
-                        name="fixedMinute"
-                        rules={[
-                          { required: true, message: '请输入分钟数' },
-                          {
-                            type: 'number',
-                            min: 0,
-                            max: 59,
-                            message: '分钟数范围 0-59',
-                          },
-                        ]}
-                      >
-                        <InputNumber min={0} max={59} style={{ width: '100%' }} />
-                      </Form.Item>
+                      <>
+                        <Form.Item
+                          label="每小时第几分钟执行"
+                          name="fixedMinute"
+                          rules={[
+                            { required: true, message: '请输入分钟数' },
+                            {
+                              type: 'number',
+                              min: 0,
+                              max: 59,
+                              message: '分钟数范围 0-59',
+                            },
+                          ]}
+                        >
+                          <InputNumber min={0} max={59} style={{ width: '100%' }} addonAfter="分" />
+                        </Form.Item>
+                        <Form.Item
+                          label="第几秒执行"
+                          name="fixedSecond"
+                          rules={[
+                            { required: true, message: '请输入秒数' },
+                            {
+                              type: 'number',
+                              min: 0,
+                              max: 59,
+                              message: '秒数范围 0-59',
+                            },
+                          ]}
+                        >
+                          <InputNumber min={0} max={59} style={{ width: '100%' }} addonAfter="秒" />
+                        </Form.Item>
+                      </>
                     )
                   }
                 </Form.Item>

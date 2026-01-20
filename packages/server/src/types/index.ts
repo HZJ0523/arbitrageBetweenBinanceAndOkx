@@ -15,6 +15,13 @@ export {
   type FundingRateArbitragePayload,
   type StatusUpdatePayload,
   type ErrorPayload,
+  type ActiveArbitragePosition,
+  type OpenArbitrageRequest,
+  type OpenArbitrageResponse,
+  type CloseArbitrageRequest,
+  type CloseArbitrageResponse,
+  type ActivePositionsPayload,
+  type ArbitrageResultPayload,
 } from '@cryptos/shared';
 
 // ============================================
@@ -77,4 +84,16 @@ export interface OKXFundingRateData {
   nextFundingRate: string;
   fundingTime: string;
   nextFundingTime: string;
+}
+
+// 订单方向
+export type PositionSide = 'long' | 'short';
+
+// 订单结果
+export interface OrderResult {
+  success: boolean;
+  orderId?: string;
+  filledQty?: number;      // 成交数量
+  avgPrice?: number;       // 成交均价
+  error?: string;
 }

@@ -5,8 +5,11 @@
   "private": true,
   "scripts": {
     "dev": "concurrently \"pnpm --filter server dev\" \"pnpm --filter web dev\"",
-    "build": "pnpm --filter server build && pnpm --filter web build",
+    "dev:server": "pnpm --filter server dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm --filter @cryptos/shared build && pnpm --filter server build && pnpm --filter web build",
     "start": "pnpm --filter server start",
+    "typecheck": "pnpm -r --parallel run typecheck",
     "clean": "rm -rf packages/*/dist packages/*/node_modules node_modules"
   },
   "keywords": [
@@ -26,5 +29,10 @@
   "engines": {
     "node": ">=18.0.0",
     "pnpm": ">=8.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

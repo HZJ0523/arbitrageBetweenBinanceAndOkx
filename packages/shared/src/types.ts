@@ -65,6 +65,7 @@ export interface MonitorConfig {
     mode: 'interval' | 'fixed';
     intervalSeconds?: number;
     fixedMinute?: number;
+    fixedSecond?: number;
   };
 }
 
@@ -86,21 +87,29 @@ export type WSMessageType =
   | 'ACCOUNT_INFO'
   | 'STATUS_UPDATE'
   | 'ERROR'
-  | 'LOG';
+  | 'LOG'
+  | 'OPEN_ARBITRAGE'
+  | 'CLOSE_ARBITRAGE'
+  | 'ACTIVE_POSITIONS_DATA'
+  | 'ARBITRAGE_RESULT';
 
 // 客户端发送的消息
 export interface WSClientMessage {
-  type: 'CONFIG_UPDATE' | 'MANUAL_REFRESH' | 'SUBSCRIBE';
+  type: 'CONFIG_UPDATE' | 'MANUAL_REFRESH' | 'SUBSCRIBE' | 'OPEN_ARBITRAGE' | 'CLOSE_ARBITRAGE';
   payload?: MonitorConfig | {
     fundingRateArbitrage: boolean;
-  };
+  } | OpenArbitrageRequest | CloseArbitrageRequest;
 }
 
-// 服务端发送的消息
-export interface WSServerMessage {
-  type: WSMessageType;
-  payload: unknown;
-}
+// 服务端发送的消息 - 使用联合类型精确定义
+export type WSServerMessage =
+  | { type: 'FUNDING_RATE_ARBITRAGE_DATA'; payload: FundingRateArbitragePayload }
+  | { type: 'ACCOUNT_INFO'; payload: AccountInfo }
+  | { type: 'ACTIVE_POSITIONS_DATA'; payload: ActivePositionsPayload }
+  | { type: 'ARBITRAGE_RESULT'; payload: ArbitrageResultPayload }
+  | { type: 'STATUS_UPDATE'; payload: StatusUpdatePayload }
+  | { type: 'ERROR'; payload: ErrorPayload }
+  | { type: 'LOG'; payload: LogMessage };
 
 // 资金费率套利数据消息
 export interface FundingRateArbitragePayload {
@@ -121,4 +130,69 @@ export interface ErrorPayload {
   code: string;
   message: string;
   details?: unknown;
+}
+
+// ============================================
+// 套利交易相关类型
+// ============================================
+
+// 正在套利中的仓位
+export interface ActiveArbitragePosition {
+  id: string;                           // 唯一标识
+  symbol: string;                       // 交易对 (如 BTC)
+  usdtAmount: number;                   // 开仓 USDT 金额
+  longExchange: ExchangeType;           // 开多的交易所
+  shortExchange: ExchangeType;          // 开空的交易所
+  longFundingRate: number;              // 开多方资金费率
+  shortFundingRate: number;             // 开空方资金费率
+  longFundingRatePercent: string;       // 开多方资金费率百分比
+  shortFundingRatePercent: string;      // 开空方资金费率百分比
+  longSettlementPeriodHours: number;    // 开多方结算周期
+  shortSettlementPeriodHours: number;   // 开空方结算周期
+  longNextSettlementTime: string;       // 开多方下次结算时间
+  shortNextSettlementTime: string;      // 开空方下次结算时间
+  createdAt: string;                    // 开仓时间
+  closeStatus?: 'active' | 'partial' | 'failed';
+  closeError?: string | null;
+  closedLong?: boolean;
+  closedShort?: boolean;
+}
+
+// 开仓请求
+export interface OpenArbitrageRequest {
+  symbol: string;
+  usdtAmount: number;
+}
+
+// 开仓响应
+export interface OpenArbitrageResponse {
+  success: boolean;
+  position?: ActiveArbitragePosition;
+  error?: string;
+}
+
+// 平仓请求
+export interface CloseArbitrageRequest {
+  positionId: string;
+}
+
+// 平仓响应
+export interface CloseArbitrageResponse {
+  success: boolean;
+  error?: string;
+}
+
+// 活跃仓位数据消息
+export interface ActivePositionsPayload {
+  positions: ActiveArbitragePosition[];
+  updatedAt: string;
+}
+
+// 套利结果消息
+export interface ArbitrageResultPayload {
+  action: 'open' | 'close';
+  success: boolean;
+  position?: ActiveArbitragePosition;
+  positionId?: string;
+  error?: string;
 }

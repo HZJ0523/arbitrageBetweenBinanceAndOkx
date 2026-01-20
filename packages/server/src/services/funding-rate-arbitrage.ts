@@ -1,5 +1,6 @@
 import type { FuturesData, FundingRateArbitrageItem } from '../types/index.js';
 import logger from '../utils/logger.js';
+import { formatPercent } from '../utils/format.js';
 
 /**
  * 计算年化收益率
@@ -11,13 +12,6 @@ function calculateAnnualizedRate(fundingRate: number, settlementPeriodHours: num
   // 年化 = 费率 × (24 / 结算周期小时数) × 365
   const periodsPerDay = 24 / settlementPeriodHours;
   return fundingRate * periodsPerDay * 365 * 100; // 转换为百分比
-}
-
-/**
- * 格式化费率为百分比字符串
- */
-function formatPercent(rate: number): string {
-  return `${(rate * 100).toFixed(4)}%`;
 }
 
 /**

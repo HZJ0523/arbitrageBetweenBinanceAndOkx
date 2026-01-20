@@ -1,14 +1,18 @@
-import { useSyncExternalStore, useCallback } from 'react';
+import { useSyncExternalStore } from 'react';
 
 // 全局 tick 订阅器 - 单一定时器驱动所有倒计时
 let listeners: Set<() => void> = new Set();
 let currentTick = Date.now();
+let isPageVisible =
+  typeof document === 'undefined' ? true : document.visibilityState !== 'hidden';
+let visibilityListenerAttached = false;
 
 // 启动全局定时器 (仅当有订阅者时运行)
 let intervalId: number | null = null;
 
 function startTicker() {
   if (intervalId !== null) return;
+  if (!isPageVisible) return;
 
   intervalId = window.setInterval(() => {
     currentTick = Date.now();
@@ -23,8 +27,30 @@ function stopTicker() {
   }
 }
 
+function handleVisibilityChange() {
+  isPageVisible = document.visibilityState !== 'hidden';
+
+  if (!isPageVisible) {
+    stopTicker();
+    return;
+  }
+
+  if (listeners.size > 0) {
+    currentTick = Date.now();
+    listeners.forEach((listener) => listener());
+    startTicker();
+  }
+}
+
+function ensureVisibilityListener() {
+  if (visibilityListenerAttached || typeof document === 'undefined') return;
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  visibilityListenerAttached = true;
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
+  ensureVisibilityListener();
 
   // 首个订阅者时启动定时器
   if (listeners.size === 1) {
@@ -51,21 +77,6 @@ function getSnapshot(): number {
  */
 export function useTick(): number {
   return useSyncExternalStore(subscribe, getSnapshot);
-}
-
-/**
- * 计算倒计时秒数
- * @param nextSettlementTime - 下次结算时间 (ISO 字符串)
- * @returns 剩余秒数
- */
-export function useCountdown(nextSettlementTime: string): number {
-  const tick = useTick();
-
-  return useCallback(() => {
-    const targetTime = new Date(nextSettlementTime).getTime();
-    const remaining = Math.floor((targetTime - tick) / 1000);
-    return remaining > 0 ? remaining : 0;
-  }, [nextSettlementTime, tick])();
 }
 
 export default useTick;

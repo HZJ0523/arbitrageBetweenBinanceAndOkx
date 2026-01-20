@@ -21,6 +21,7 @@ export async function createApp() {
   // 注册 WebSocket
   await app.register(websocket, {
     options: {
+      perMessageDeflate: true,
       maxPayload: 1048576, // 1MB
     },
   });
