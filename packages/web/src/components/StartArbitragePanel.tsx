@@ -11,6 +11,7 @@ export const StartArbitragePanel: React.FC = memo(() => {
   const [inputFocused, setInputFocused] = useState(false);
 
   const fundingRateArbitrage = useArbitrageStore((state) => state.fundingRateArbitrage);
+  const activePositions = useArbitrageStore((state) => state.activePositions);
   const accountInfo = useArbitrageStore((state) => state.accountInfo);
   const isOpening = useArbitrageStore((state) => state.isOpening);
 
@@ -23,14 +24,19 @@ export const StartArbitragePanel: React.FC = memo(() => {
     [accountInfo]
   );
 
-  // 获取交易对选项 - 使用 useMemo 避免每次渲染重新计算
-  const symbolOptions = useMemo(() =>
-    fundingRateArbitrage.map((item) => ({
-      label: `${item.symbol}/USDT (年化: ${item.annualizedYieldPercent})`,
-      value: item.symbol,
-    })),
-    [fundingRateArbitrage]
-  );
+  // 获取交易对选项 - 过滤掉正在套利中的交易对
+  const symbolOptions = useMemo(() => {
+    // 获取正在套利中的交易对集合
+    const activeSymbols = new Set(activePositions.map(p => p.symbol));
+
+    // 过滤掉已在套利中的交易对
+    return fundingRateArbitrage
+      .filter((item) => !activeSymbols.has(item.symbol))
+      .map((item) => ({
+        label: `${item.symbol}/USDT (年化: ${item.annualizedYieldPercent})`,
+        value: item.symbol,
+      }));
+  }, [fundingRateArbitrage, activePositions]);
 
   // 设置套利结果回调
   useEffect(() => {
@@ -55,16 +61,23 @@ export const StartArbitragePanel: React.FC = memo(() => {
     return addArbitrageResultCallback(handleResult);
   }, []);
 
-  // 当套利机会列表更新时，检查选中的交易对是否还存在
+  // 当套利机会列表或活跃仓位更新时，检查选中的交易对是否还可用
   useEffect(() => {
     if (selectedSymbol) {
-      const exists = fundingRateArbitrage.some((item) => item.symbol === selectedSymbol);
-      if (!exists) {
+      // 检查是否还在套利机会列表中
+      const existsInArbitrage = fundingRateArbitrage.some((item) => item.symbol === selectedSymbol);
+      // 检查是否已在套利中
+      const isActivePosition = activePositions.some((p) => p.symbol === selectedSymbol);
+
+      if (!existsInArbitrage) {
         setSelectedSymbol(null);
         message.warning('选中的交易对已不在套利机会列表中');
+      } else if (isActivePosition) {
+        setSelectedSymbol(null);
+        message.info('选中的交易对已开始套利');
       }
     }
-  }, [fundingRateArbitrage, selectedSymbol]);
+  }, [fundingRateArbitrage, activePositions, selectedSymbol]);
 
   const handleConfirm = useCallback(() => {
     if (!selectedSymbol) {
